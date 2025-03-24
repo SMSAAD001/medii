@@ -1,98 +1,61 @@
 import streamlit as st
 import requests
 import os
-import time
-import speech_recognition as sr  # Speech-to-Text
-from gtts import gTTS  # Text-to-Speech
+import json
+from dotenv import load_dotenv
 
-# Retrieve API key from environment variables
-API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+# Load environment variables
+load_dotenv()
+HF_API_KEY = os.getenv("HF_API_KEY")  # Ensure .env contains HF_API_KEY=your_api_key
 
-# Function to query Hugging Face API
-def query_huggingface_api(prompt):
-    API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+# Check API Key
+if not HF_API_KEY:
+    st.error("API key not found. Please set HF_API_KEY in your .env file.")
+    st.stop()
+
+# Hugging Face API URL
+API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"  # Change if needed
+
+# Headers for authentication
+HEADERS = {"Authorization": f"Bearer {HF_API_KEY}"}
+
+def query_huggingface(prompt):
+    """Fetches response from Hugging Face model with proper error handling."""
     payload = {"inputs": prompt}
     
-    with st.spinner("Fetching response..."):
-        response = requests.post(API_URL, headers=headers, json=payload)
-        time.sleep(1)  # Simulate processing time
+    try:
+        response = requests.post(API_URL, headers=HEADERS, json=payload)
         
-        if response.status_code == 200:
-            try:
-                result = response.json()
-                if isinstance(result, list) and len(result) > 0:
-                    return result[0].get("generated_text", "Sorry, I couldn't understand that.")
-                return "Sorry, I couldn't understand that."
-            except requests.exceptions.JSONDecodeError:
-                return "Invalid API response."
+        # If no response or invalid JSON, raise an error
+        if response.status_code != 200:
+            return f"Error: {response.status_code} - {response.text}"
+        
+        # Try to parse JSON response
+        data = response.json()
+        
+        # Ensure there's valid generated text
+        if isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
+            return data[0]["generated_text"]
         else:
-            return f"API request failed with status code {response.status_code}"
-
-# Initialize session state for chat history
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+            return "Error: No valid response received from the model."
+    
+    except json.JSONDecodeError:
+        return "Error: Unable to decode response. API might be down."
+    except Exception as e:
+        return f"Unexpected Error: {str(e)}"
 
 # Streamlit UI
-st.set_page_config(page_title="Medicine Chatbot", layout="centered")
-st.title("💊 Medicine & Disease Prediction Chatbot")
-st.write("👩‍⚕️ Ask about symptoms, medicines, or health advice!")
+st.title("Medicinal Chatbot ")
+st.write("Ask me anything about medicines, symptoms, or treatments.")
 
-# Speech-to-Text Feature
-def recognize_speech():
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.info("Listening... Speak now!")
-        try:
-            audio = recognizer.listen(source, timeout=5)
-            return recognizer.recognize_google(audio)
-        except sr.UnknownValueError:
-            return "Sorry, could not understand your voice."
-        except sr.RequestError:
-            return "Check your internet connection."
+# User input
+user_input = st.text_input("Enter your query:", "What are the side effects of paracetamol?")
 
-# Short Answer Generator
-def generate_short_answer(prompt):
-    full_response = query_huggingface_api(prompt)
-    return " ".join(full_response.split()[:40])  # Limit to ~3-4 lines
-
-# General Health Query
-st.subheader("💬 General Health Query")
-user_input = st.text_input("You:", "", key="query_input")
-if st.button("🎙️ Speak"):
-    user_input = recognize_speech()
-    st.text(f"You: {user_input}")
-
-if st.button("Ask"): 
-    if user_input:
-        detailed_prompt = f"Provide a **short** medical explanation for: {user_input}. Include key symptoms, causes, and treatments."
-        response_text = generate_short_answer(detailed_prompt)
-        
-        st.session_state.chat_history.append((user_input, response_text))
-        st.success(f"🤖 **Bot:** {response_text}")
-
-# Chat History
-st.subheader("📜 Chat History")
-for query, reply in st.session_state.chat_history[-5:]:  # Show last 5 exchanges
-    st.write(f"👤 **You:** {query}")
-    st.write(f"🤖 **Bot:** {reply}")
-    st.write("---")
-
-# Disease Prediction Based on Symptoms
-st.subheader("🩺 Disease Prediction")
-symptoms = st.text_area("Enter symptoms (comma-separated):", "fever, cough, sore throat")
-if st.button("Predict Disease"):
-    if symptoms:
-        prediction_prompt = f"Predict possible diseases based on: {symptoms}. Provide a brief summary (max 4 lines)."
-        disease_text = generate_short_answer(prediction_prompt)
-        st.warning(f"🩺 **Possible Disease:** {disease_text}")
-
-# Medicine Information
-st.subheader("💊 Medicine Suggestions")
-med_query = st.text_input("Ask about a medicine:", "What is Paracetamol used for?")
-if st.button("Get Medicine Info"):
-    if med_query:
-        med_prompt = f"Explain in **4 lines max** the uses, dosage, and side effects of {med_query}."
-        med_text = generate_short_answer(med_prompt)
-        st.info(f"💊 **Medicine Info:** {med_text}")
-
+if st.button("Get Answer"):
+    if user_input.strip():
+        with st.spinner("Thinking..."):
+            response = query_huggingface(user_input)
+            st.success("Response:")
+            st.write(response)
+    else:
+        st.warning("Please enter a query.")
